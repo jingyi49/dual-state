@@ -268,22 +268,3 @@ python infer_wavlm.py \
 Inference preserves the input duration, converts multi-channel inputs to mono,
 and writes 16 kHz PCM WAV files. Select the device using `--device cpu`,
 `--device cuda`, or `--device cuda:N`.
-
-## Citation
-
-If you find this work useful, please cite:
-
-```bibtex
-@misc{li2026autoregression,
-  title  = {Do We Need Autoregression for Token-Based Speech Enhancement?},
-  author = {Li, Jingyi and Della Libera, Luca and Subakan, Cem and Ravanelli, Mirco},
-  year   = {2026}
-}
-```
-
-The citation will be updated with the final publication metadata.
-
-## Acknowledgements
-
-This work uses pretrained representations from WavLM and acoustic tokens from
-FocalCodec. The WavLM feature-extraction setup follows LLaSE-G1.
