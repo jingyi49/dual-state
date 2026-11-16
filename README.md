@@ -1,17 +1,21 @@
-# Direct Non-Autoregressive Token Prediction for Speech Enhancement
+# Do We Need Autoregression for Token-Based Speech Enhancement?
 
-Official implementation and pretrained checkpoints for our study of direct
-non-autoregressive (NAR) acoustic-token prediction for speech enhancement.
+Official implementation and pretrained checkpoints for:
 
-Rather than generating clean acoustic tokens sequentially, the system predicts
-all tokens in parallel from frozen WavLM representations of noisy speech. The
-predicted tokens are converted to an enhanced waveform with a pretrained
-FocalCodec decoder. We evaluate a dual-state predictor at three codec token
-rates: **50 Hz**, **25 Hz**, and **12.5 Hz**.
+**Do We Need Autoregression for Token-Based Speech Enhancement?**
 
-Audio samples are available on the [demo page](https://jingyi49.github.io/demo/).
+Jingyi Li, Luca Della Libera, Cem Subakan, and Mirco Ravanelli
 
-## Method
+This work investigates whether autoregressive (AR) generation is necessary for
+high-quality token-based speech enhancement. We formulate enhancement as direct
+non-autoregressive (NAR) prediction of clean acoustic tokens from noisy-speech
+representations. All token positions are predicted in parallel and converted to
+an enhanced waveform by a frozen neural codec decoder.
+
+- [Audio demo](https://jingyi49.github.io/demo/)
+- [Pretrained checkpoints](https://github.com/jingyi49/dual-state/releases/tag/checkpoints-v1)
+
+## Overview
 
 ```text
 Noisy waveform
@@ -20,10 +24,10 @@ Noisy waveform
 Frozen WavLM-Large (layer 6)
       |
       v
-Dual-state Transformer predictor
+Parallel token predictor (shallow, deep, or dual-state)
       |
       v
-Clean FocalCodec tokens (predicted in parallel)
+Clean FocalCodec tokens
       |
       v
 Frozen FocalCodec decoder
@@ -32,9 +36,90 @@ Frozen FocalCodec decoder
 Enhanced waveform
 ```
 
-FocalCodec is used because it provides high-quality speech reconstruction with
-a single codebook, allowing direct parallel token prediction without the
+The noisy waveform is encoded into continuous WavLM representations. A
+trainable predictor maps these representations directly to a sequence of clean
+FocalCodec tokens, with no conditioning on previously generated tokens. During
+training, the target tokens are extracted from the corresponding clean waveform
+using the frozen FocalCodec tokenizer. Only the predictor is optimized; WavLM
+and FocalCodec remain frozen.
+
+We adopt FocalCodec because it provides high-quality speech reconstruction with
+a single codebook, enabling direct parallel token prediction without the
 additional inter-codebook dependencies introduced by multi-codebook codecs.
+
+## Predictor architectures
+
+We study three predictors under the same WavLM-to-FocalCodec framework:
+
+- **Shallow single-state:** one 4-layer non-causal Transformer.
+- **Deep single-state:** one 8-layer non-causal Transformer.
+- **Dual-state:** separate 4-layer context and prediction Transformers, each
+  applied once. The context state summarizes the noisy representation and the
+  prediction state produces the token logits.
+
+The comparison isolates the effect of predictor structure while retaining fully
+parallel token generation in all three cases.
+
+## Main results
+
+### DNSMOS
+
+DNSMOS results on the DNS Challenge 2020 test sets and real recordings are
+reported as OVRL / SIG / BAK. Higher is better.
+
+| Model | Type | Reverb | No reverb | Real recordings |
+|---|---|---:|---:|---:|
+| LLaSE-G1 | AR | 3.33 / 3.59 / 4.10 | 3.42 / 3.66 / 4.17 | 3.06 / 3.36 / 3.96 |
+| UniSE | AR | 3.41 / 3.68 / 4.12 | 3.42 / 3.67 / 4.13 | 3.23 / 3.56 / 3.96 |
+| **Dual-state (12.5 Hz)** | **NAR** | **3.46 / 3.67 / 4.21** | **3.44 / 3.66 / 4.20** | **3.44 / 3.67 / 4.19** |
+| **Dual-state (25 Hz)** | **NAR** | **3.46 / 3.67 / 4.21** | **3.44 / 3.65 / 4.20** | **3.42 / 3.65 / 4.18** |
+| **Dual-state (50 Hz)** | **NAR** | **3.43 / 3.65 / 4.19** | **3.42 / 3.65 / 4.19** | **3.40 / 3.64 / 4.17** |
+
+The 12.5-Hz and 25-Hz variants obtain the highest reverberant OVRL score, while
+the 12.5-Hz model leads all reported DNSMOS components on real recordings.
+
+### Predictor ablation
+
+All predictors achieve similar DNSMOS, but the dual-state model improves
+linguistic consistency. Speaker similarity (SS) is higher-is-better and
+differential word error rate (dWER) is lower-is-better.
+
+| Predictor | Reverb OVRL / SIG / BAK | No-reverb OVRL / SIG / BAK | dWER | SS |
+|---|---:|---:|---:|---:|
+| Shallow | 3.43 / 3.65 / 4.19 | 3.43 / 3.64 / 4.20 | 0.44 | 0.93 |
+| Deep | 3.43 / 3.65 / 4.19 | 3.42 / 3.64 / 4.19 | 0.16 | 0.97 |
+| **Dual-state** | **3.43 / 3.65 / 4.19** | **3.42 / 3.65 / 4.19** | **0.12** | **0.97** |
+
+### Continuous versus discrete prediction
+
+The paper also compares discrete token prediction with continuous latent
+prediction using three VAE decoders. The discrete 50-Hz dual-state model
+substantially improves DNSMOS across both acoustic conditions.
+
+| Target representation | Reverb OVRL / SIG / BAK | No-reverb OVRL / SIG / BAK |
+|---|---:|---:|
+| EAR-VAE2 | 2.37 / 2.63 / 3.80 | 2.42 / 2.69 / 3.74 |
+| KVAE-Audio | 1.80 / 2.13 / 3.33 | 1.88 / 2.21 / 3.38 |
+| SAME-S | 1.66 / 1.98 / 3.19 | 1.51 / 1.74 / 3.23 |
+| **FocalCodec tokens (dual-state, 50 Hz)** | **3.43 / 3.65 / 4.19** | **3.42 / 3.65 / 4.19** |
+
+### Computational cost
+
+The real-time factor (RTF) is inference time divided by input duration; lower
+values indicate faster processing. Parameters include all inference modules,
+including frozen components. MACs and RTFs are measured on 10-second waveforms.
+
+| Model | Parameters (M) | GMACs | CPU RTF | GPU RTF |
+|---|---:|---:|---:|---:|
+| LLaSE-G1 | 1283.05 | 688.04 | 0.326 | 0.009 |
+| QuarkAudio-UniSE | 253.98 | 427.80 | 0.640 | 0.172 |
+| Dual-state (50 Hz) | 135.02 | 92.75 | 0.073 | 0.002 |
+| Dual-state (25 Hz) | 136.07 | 85.48 | **0.048** | **0.002** |
+| Dual-state (12.5 Hz) | 136.59 | **83.66** | 0.068 | **0.002** |
+
+CPU measurements use four threads on an AMD EPYC 9655. GPU measurements use an
+NVIDIA H100 MIG 3g.40gb partition. Values are medians of five runs after two
+warm-up runs and exclude model loading and file I/O.
 
 ## Repository structure
 
@@ -42,15 +127,17 @@ additional inter-codebook dependencies introduced by multi-codebook codecs.
 train_wavlm.py       Training entry point
 infer_wavlm.py       Inference entry point
 trm.py               Dual-state predictor
-single_state.py      Shallow and deep single-state ablations
+single_state.py      Shallow and deep single-state predictors
 dns.py               Paired noisy/clean audio dataset
 dns_refinement.py    Parallel token-prediction helper
 experiments/         Configurations and training logs for each token rate
-dnsmos_results/      Per-utterance DNSMOS results
-codec_manifest.json  FocalCodec versions used in the experiments
+dnsmos_results/      Per-utterance DNSMOS outputs
+codec_manifest.json  FocalCodec repositories and pinned revisions
 ```
 
-## Requirements
+## Installation
+
+### Requirements
 
 - Python 3.10 or later
 - PyTorch and TorchAudio
@@ -62,7 +149,7 @@ codec_manifest.json  FocalCodec versions used in the experiments
 - The WavLM implementation from
   [LLaSE-G1](https://github.com/Kevin-naticl/LLaSE-G1)
 
-A minimal environment can be prepared with:
+Create a minimal environment with:
 
 ```bash
 python -m venv .venv
@@ -70,8 +157,8 @@ source .venv/bin/activate
 pip install torch torchaudio soundfile tqdm
 ```
 
-Download `WavLM-Large.pt` and clone LLaSE-G1, then pass their local paths using
-`--wavlm-checkpoint` and `--wavlm-repo`.
+Download `WavLM-Large.pt` and clone LLaSE-G1. Their paths are supplied to the
+training and inference scripts with `--wavlm-checkpoint` and `--wavlm-repo`.
 
 ## Data preparation
 
@@ -87,10 +174,9 @@ data/
     └── sample_0002.wav
 ```
 
-The loader converts audio to mono 16 kHz and applies identical crops to each
-noisy/clean pair. A deterministic 5% validation split is used by default.
-
-You can validate the file pairing before loading the pretrained models:
+Audio is converted to mono 16 kHz. Identical 10-second crops are applied to each
+noisy/clean pair, and a deterministic 5% validation split is used by default.
+Check the file pairing before loading the pretrained models with:
 
 ```bash
 python train_wavlm.py \
@@ -98,12 +184,12 @@ python train_wavlm.py \
   --check-data
 ```
 
+Custom noisy and clean directories can be provided with `--input-dir` and
+`--target-dir`.
+
 ## Training
 
-The following commands reproduce the three dual-state codec-rate experiments.
-Replace the data and WavLM paths with local paths.
-
-### 50 Hz
+The following command trains the 50-Hz dual-state model:
 
 ```bash
 python train_wavlm.py \
@@ -115,47 +201,39 @@ python train_wavlm.py \
   --wavlm-checkpoint /path/to/WavLM-Large.pt \
   --wavlm-repo /path/to/LLaSE-G1 \
   --wavlm-layer 6 \
-  --epochs 50 --batch-size 8 --crop-sec 10
+  --epochs 50 \
+  --batch-size 8 \
+  --crop-sec 10
 ```
 
-### 25 Hz
+Use the following codec settings for the lower-rate experiments:
+
+| Token rate | `--codec-config` | `--codec-revision` |
+|---|---|---|
+| 50 Hz | `lucadellalib/focalcodec_50hz` | `d6d6d9524e52155c85193c2c3b8da1cf8842f019` |
+| 25 Hz | `lucadellalib/focalcodec_25hz` | `581aa401901b4985fbbdd3569d80a5a191740c1f` |
+| 12.5 Hz | `lucadellalib/focalcodec_12_5hz` | `96ddced5e284f109d9022a65d1062fcd92dc33eb` |
+
+Architecture and loss ablations are selected using:
 
 ```bash
-python train_wavlm.py \
-  --data-dir /path/to/data \
-  --output-dir experiments/25hz \
-  --architecture dual \
-  --codec-config lucadellalib/focalcodec_25hz \
-  --codec-revision 581aa401901b4985fbbdd3569d80a5a191740c1f \
-  --wavlm-checkpoint /path/to/WavLM-Large.pt \
-  --wavlm-repo /path/to/LLaSE-G1 \
-  --wavlm-layer 6 \
-  --epochs 50 --batch-size 8 --crop-sec 10
+# Four-layer single-state predictor
+python train_wavlm.py ... --architecture shallow
+
+# Eight-layer single-state predictor
+python train_wavlm.py ... --architecture deep
+
+# Cross-entropy only
+python train_wavlm.py ... --loss-type ce_only
 ```
 
-### 12.5 Hz
-
-```bash
-python train_wavlm.py \
-  --data-dir /path/to/data \
-  --output-dir experiments/12_5hz \
-  --architecture dual \
-  --codec-config lucadellalib/focalcodec_12_5hz \
-  --codec-revision 96ddced5e284f109d9022a65d1062fcd92dc33eb \
-  --wavlm-checkpoint /path/to/WavLM-Large.pt \
-  --wavlm-repo /path/to/LLaSE-G1 \
-  --wavlm-layer 6 \
-  --epochs 50 --batch-size 8 --crop-sec 10
-```
-
-By default, training uses the combined cross-entropy and confidence BCE loss.
-Use `--loss-type ce_only` for the CE-only ablation. The architecture ablations
-are selected with `--architecture shallow` (one 4-layer state) and
-`--architecture deep` (one 8-layer state).
+The default `ce_bce` setting combines token cross-entropy with the model's
+sequence-confidence objective. `best.pt` is selected using validation loss, and
+`last.pt` contains the final epoch.
 
 ## Pretrained checkpoints
 
-The trained checkpoints are available in the
+The pretrained dual-state checkpoints are hosted in the
 [checkpoint release](https://github.com/jingyi49/dual-state/releases/tag/checkpoints-v1):
 
 | Token rate | Best checkpoint | Final checkpoint |
@@ -164,7 +242,7 @@ The trained checkpoints are available in the
 | 25 Hz | `25hz-best.pt` | `25hz-last.pt` |
 | 12.5 Hz | `12_5hz-best.pt` | `12_5hz-last.pt` |
 
-They can also be downloaded with the GitHub CLI:
+Download all checkpoints with the GitHub CLI:
 
 ```bash
 gh release download checkpoints-v1 \
@@ -175,8 +253,8 @@ gh release download checkpoints-v1 \
 
 ## Inference
 
-The input may be a WAV file, a directory of WAV files, or a text file containing
-one WAV path per line.
+The input may be a WAV file, a directory containing WAV files, or a text file
+with one WAV path per line:
 
 ```bash
 python infer_wavlm.py \
@@ -188,30 +266,24 @@ python infer_wavlm.py \
 ```
 
 Inference preserves the input duration, converts multi-channel inputs to mono,
-and writes 16 kHz PCM WAV files. Use `--device cpu`, `--device cuda`, or
-`--device cuda:N` to select the device.
-
-## DNSMOS results
-
-The following values are averages over the 150 utterances in each included
-DNSMOS result file. Full per-utterance scores are provided under
-`dnsmos_results/`.
-
-| Condition | Token rate | OVRL | SIG | BAK | P.808 |
-|---|---:|---:|---:|---:|---:|
-| Reverberant | 50 Hz | 3.424 | 3.654 | 4.187 | 4.050 |
-| Reverberant | 25 Hz | 3.459 | 3.669 | 4.208 | 4.088 |
-| Reverberant | 12.5 Hz | 3.463 | 3.675 | 4.206 | 4.048 |
-| Non-reverberant | 50 Hz | 3.429 | 3.651 | 4.190 | 4.013 |
-| Non-reverberant | 25 Hz | 3.442 | 3.653 | 4.200 | 4.038 |
-| Non-reverberant | 12.5 Hz | 3.445 | 3.657 | 4.201 | 4.018 |
+and writes 16 kHz PCM WAV files. Select the device using `--device cpu`,
+`--device cuda`, or `--device cuda:N`.
 
 ## Citation
 
-If you use this code or the pretrained models, please cite the accompanying
-paper. The BibTeX entry will be added after publication.
+If you find this work useful, please cite:
+
+```bibtex
+@misc{li2026autoregression,
+  title  = {Do We Need Autoregression for Token-Based Speech Enhancement?},
+  author = {Li, Jingyi and Della Libera, Luca and Subakan, Cem and Ravanelli, Mirco},
+  year   = {2026}
+}
+```
+
+The citation will be updated with the final publication metadata.
 
 ## Acknowledgements
 
-This repository uses pretrained representations from WavLM and acoustic tokens
-from FocalCodec. The WavLM feature-extraction setup follows LLaSE-G1.
+This work uses pretrained representations from WavLM and acoustic tokens from
+FocalCodec. The WavLM feature-extraction setup follows LLaSE-G1.
