@@ -1,0 +1,17 @@
+{
+  "25hz": {
+    "repo": "lucadellalib/focalcodec_25hz",
+    "revision": "581aa401901b4985fbbdd3569d80a5a191740c1f",
+    "path": "/home/jingyi49/scratch/bazel_cache/huggingface/hub/models--lucadellalib--focalcodec_25hz/snapshots/581aa401901b4985fbbdd3569d80a5a191740c1f"
+  },
+  "12_5hz": {
+    "repo": "lucadellalib/focalcodec_12_5hz",
+    "revision": "96ddced5e284f109d9022a65d1062fcd92dc33eb",
+    "path": "/home/jingyi49/scratch/bazel_cache/huggingface/hub/models--lucadellalib--focalcodec_12_5hz/snapshots/96ddced5e284f109d9022a65d1062fcd92dc33eb"
+  },
+  "50hz": {
+    "repo": "lucadellalib/focalcodec_50hz",
+    "revision": "d6d6d9524e52155c85193c2c3b8da1cf8842f019",
+    "path": "/home/jingyi49/scratch/bazel_cache/huggingface/hub/models--lucadellalib--focalcodec_50hz/snapshots/d6d6d9524e52155c85193c2c3b8da1cf8842f019"
+  }
+}
